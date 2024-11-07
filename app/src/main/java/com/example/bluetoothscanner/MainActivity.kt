@@ -32,6 +32,10 @@ import java.text.SimpleDateFormat
 import java.util.*
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.RequestBody.Companion.toRequestBody
+import android.content.Intent
+import android.net.Uri
+import androidx.core.content.FileProvider
+
 
 class MainActivity : ComponentActivity() {
 
@@ -44,7 +48,7 @@ class MainActivity : ComponentActivity() {
     private var azimuthValues by mutableStateOf(listOf<Float>())
 
     private val targetMacAddresses = setOf(
-        "60:98:66:32:98:58", "60:98:66:32:8E:28", "60:98:66:32:BC:AC", "60:98:66:30:A9:6E", "60:98:66:32:CA:74", "60:98:66:2F:CF:9F"
+        "60:98:66:32:98:58", "60:98:66:32:8E:28", "60:98:66:32:BC:AC", "60:98:66:30:A9:6E", "60:98:66:32:CA:74"
     )
 
     private var azimuth = 0f
@@ -185,7 +189,7 @@ class MainActivity : ComponentActivity() {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = json.toRequestBody(mediaType)
         val request = Request.Builder()
-            .url("https://your-server-url/api/current_rssi") // 서버 URL 변경
+            .url("https://49fe-117-16-196-162.ngrok-free.app/api/current_rssi") // 서버 URL 변경
             .post(body)
             .build()
 
@@ -238,15 +242,38 @@ class MainActivity : ComponentActivity() {
         val file = File(getExternalFilesDir(null), "$fileName.csv")
 
         try {
+            // 새 파일에만 데이터를 기록
             FileWriter(file, false).use { writer ->
+                // CSV 파일의 헤더 작성
                 writer.append("No.,TimeStamp,MAC Address,RSSI,Azimuth\n")
                 scanResults.forEachIndexed { index, result ->
                     val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(result.timestampNanos / 1000000)
+                    val azimuth = azimuthValues.getOrNull(index) ?: 0f  // 방향 데이터 추가
                     writer.append("${index + 1},$timestamp,${result.device.address},${result.rssi},$azimuth\n")
                 }
             }
+
+            // CSV 파일 공유
+            shareCsvFile(file)
         } catch (e: IOException) {
             Log.e("MainActivity", "Error writing CSV", e)
         }
+    }
+
+
+    private fun shareCsvFile(file: File) {
+        val uri: Uri = FileProvider.getUriForFile(
+            this,
+            "com.example.bluetoothscanner.provider",
+            file
+        )
+
+        val shareIntent: Intent = Intent().apply {
+            action = Intent.ACTION_SEND
+            type = "text/csv"
+            putExtra(Intent.EXTRA_STREAM, uri)
+            flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+        }
+        startActivity(Intent.createChooser(shareIntent, "Share CSV via"))
     }
 }
