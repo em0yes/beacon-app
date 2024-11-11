@@ -21,8 +21,7 @@ import androidx.compose.ui.tooling.preview.Preview
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BLEScannerScreen(
-    scanResults: List<ScanResult>,
-    azimuthValues: List<Float>,  // azimuth 값을 추가합니다.
+    scanResults: List<Pair<ScanResult, Int>>,  // ScanResult와 azimuth를 Pair로 전달
     scanning: Boolean,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit
@@ -71,16 +70,14 @@ fun BLEScannerScreen(
                             verticalAlignment = Alignment.CenterVertically
                         ) {
                             TableCell(text = "No.", weight = 0.2f, fontSize = 12.sp, textAlign = TextAlign.Center)
-                            TableCell(text = "TimeStamp", weight = 0.8f, fontSize = 12.sp, textAlign = TextAlign.Center)
+                            TableCell(text = "Time Stamp", weight = 0.8f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = "MAC Address", weight = 1.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = "RSSI", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
-                            TableCell(text = "Azimuth", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center) // Azimuth 헤더 추가
+                            TableCell(text = "Azimuth", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                         }
                     }
 
-                    // Ensure azimuthValues and scanResults have the same size
-                    itemsIndexed(scanResults) { index, result ->
-                        val azimuth = azimuthValues.getOrNull(index) ?: 0f  // Default to 0 if azimuth value is missing
+                    itemsIndexed(scanResults) { index, (result, azimuth) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth(),
@@ -90,24 +87,12 @@ fun BLEScannerScreen(
                             TableCell(text = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(result.timestampNanos / 1000000), weight = 0.8f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = result.device.address, weight = 1.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = result.rssi.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
-                            TableCell(text = azimuth.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center) // Azimuth 값 추가
+                            TableCell(text = azimuth.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center) // 해당 타임스탬프에 맞는 azimuth 값 표시
                         }
                     }
                 }
             }
         }
-    )
-}
-
-@Preview(showBackground = true)
-@Composable
-fun PreviewBLEScannerScreen() {
-    BLEScannerScreen(
-        scanResults = listOf(),
-        azimuthValues = listOf(),  // 빈 리스트를 전달하여 미리보기를 위한 기본값 설정
-        scanning = false,
-        onStartScan = {},
-        onStopScan = {}
     )
 }
 

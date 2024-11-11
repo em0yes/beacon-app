@@ -35,26 +35,22 @@ import okhttp3.RequestBody.Companion.toRequestBody
 import android.content.Intent
 import android.net.Uri
 import androidx.core.content.FileProvider
+import kotlin.math.*
 
 class MainActivity : ComponentActivity() {
 
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private lateinit var sensorManager: SensorManager
-    private lateinit var accelerometerSensor: Sensor
-    private lateinit var magneticSensor: Sensor
+    private lateinit var rotationVectorSensor: Sensor
 
     private var scanning by mutableStateOf(false)
-    private var scanResults by mutableStateOf(listOf<ScanResult>())
-    private var azimuthValues by mutableStateOf(listOf<Float>())
+    private var scanResults by mutableStateOf(listOf<Pair<ScanResult, Int>>()) // azimuth 값을 Int로 저장
+    private var latestAzimuth = 0f  // 최신 방위각 값을 저장
 
     private val targetMacAddresses = setOf(
         "60:98:66:32:98:58", "60:98:66:32:8E:28", "60:98:66:32:BC:AC", "60:98:66:30:A9:6E", "60:98:66:32:CA:74",
         "60:98:66:32:B8:EF"
     )
-
-    private var azimuthInt = 0
-    private val accelerometerValues = FloatArray(3)
-    private val magneticValues = FloatArray(3)
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -62,7 +58,6 @@ class MainActivity : ComponentActivity() {
         setContent {
             BLEScannerScreen(
                 scanResults = scanResults,
-                azimuthValues = azimuthValues,
                 scanning = scanning,
                 onStartScan = { startBleScan() },
                 onStopScan = { promptFileNameAndSave() }
@@ -73,16 +68,11 @@ class MainActivity : ComponentActivity() {
         bluetoothAdapter = bluetoothManager.adapter
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)!!
-        magneticSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)!!
-
-        sensorManager.registerListener(sensorEventListener, accelerometerSensor, SensorManager.SENSOR_DELAY_UI)
-        sensorManager.registerListener(sensorEventListener, magneticSensor, SensorManager.SENSOR_DELAY_UI)
+        rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)!!
+        sensorManager.registerListener(sensorEventListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requestBluetoothPermissions()
-        } else {
-            startBleScan()
         }
     }
 
@@ -148,11 +138,11 @@ class MainActivity : ComponentActivity() {
             val macAddress = result.device.address
 
             if (macAddress in targetMacAddresses) {
-                scanResults = scanResults + result
-                azimuthValues = azimuthValues + azimuthInt.toFloat() // Int를 Float로 변환하여 추가
-
+                // 방위각을 소수점 없이 정수로 저장
+                val azimuthSnapshot = latestAzimuth.toInt()
+                scanResults = scanResults + (result to azimuthSnapshot) // 방위각과 함께 결과 저장
                 val rssi = result.rssi
-                sendDataToServer(macAddress, rssi, azimuthInt)
+                sendDataToServer(macAddress, rssi, azimuthSnapshot) // 서버에 저장된 방위각을 전송
             }
         }
     }
@@ -194,7 +184,7 @@ class MainActivity : ComponentActivity() {
         val mediaType = "application/json; charset=utf-8".toMediaType()
         val body = json.toRequestBody(mediaType)
         val request = Request.Builder()
-            .url("https://49fe-117-16-196-162.ngrok-free.app/api/current_rssi")
+            .url("https://your-server-endpoint/api/current_rssi")
             .post(body)
             .build()
 
@@ -215,44 +205,25 @@ class MainActivity : ComponentActivity() {
 
     private val sensorEventListener = object : SensorEventListener {
         override fun onSensorChanged(event: SensorEvent) {
-            when (event.sensor.type) {
-                Sensor.TYPE_ACCELEROMETER -> {
-                    System.arraycopy(event.values, 0, accelerometerValues, 0, event.values.size)
-                }
-                Sensor.TYPE_MAGNETIC_FIELD -> {
-                    System.arraycopy(event.values, 0, magneticValues, 0, event.values.size)
-                }
-            }
-
-            val rotationMatrix = FloatArray(9)
-            val adjustedRotationMatrix = FloatArray(9)
-            val success = SensorManager.getRotationMatrix(rotationMatrix, null, accelerometerValues, magneticValues)
-
-            if (success) {
-                // 회전 행렬을 재매핑하여 세로 또는 수평 상태에서도 일관된 방위각을 얻도록 설정합니다.
-                SensorManager.remapCoordinateSystem(
-                    rotationMatrix,
-                    SensorManager.AXIS_X,  // 기기의 X축을 기준으로
-                    SensorManager.AXIS_Z,  // 기기의 Z축을 기준으로 (수직 방향)
-                    adjustedRotationMatrix
-                )
+            if (event.sensor == rotationVectorSensor) {
+                val rotationMatrix = FloatArray(9)
+                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
 
                 val orientation = FloatArray(3)
-                SensorManager.getOrientation(adjustedRotationMatrix, orientation)
+                SensorManager.getOrientation(rotationMatrix, orientation)
 
-                azimuthInt = ((Math.toDegrees(orientation[0].toDouble()).toInt() + 360) % 360)
-                Log.i("Direction", "Azimuth (int): $azimuthInt (adjusted for orientation)")
+                // 방위각을 절대적으로 표시 (0이 북쪽, 90이 동쪽) 후 소수점을 없애고 정수로 저장
+                latestAzimuth = ((Math.toDegrees(orientation[0].toDouble()) + 360) % 360).toFloat()
+                Log.i("Direction", "Latest Azimuth: $latestAzimuth")
             }
         }
 
         override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
     }
 
-
     override fun onResume() {
         super.onResume()
-        sensorManager.registerListener(sensorEventListener, accelerometerSensor, SensorManager.SENSOR_DELAY_UI)
-        sensorManager.registerListener(sensorEventListener, magneticSensor, SensorManager.SENSOR_DELAY_UI)
+        sensorManager.registerListener(sensorEventListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
     }
 
     override fun onPause() {
@@ -266,10 +237,9 @@ class MainActivity : ComponentActivity() {
         try {
             FileWriter(file, false).use { writer ->
                 writer.append("No.,TimeStamp,MAC Address,RSSI,Azimuth\n")
-                scanResults.forEachIndexed { index, result ->
+                scanResults.forEachIndexed { index, (result, azimuthSnapshot) ->
                     val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(result.timestampNanos / 1000000)
-                    val azimuth = azimuthValues.getOrNull(index) ?: 0
-                    writer.append("${index + 1},$timestamp,${result.device.address},${result.rssi},$azimuth\n")
+                    writer.append("${index + 1},$timestamp,${result.device.address},${result.rssi},$azimuthSnapshot\n")
                 }
             }
             shareCsvFile(file)
