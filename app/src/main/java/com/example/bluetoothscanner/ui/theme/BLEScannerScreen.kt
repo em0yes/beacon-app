@@ -21,7 +21,7 @@ import androidx.compose.ui.tooling.preview.Preview
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun BLEScannerScreen(
-    scanResults: List<Pair<ScanResult, Int>>,  // ScanResult와 azimuth를 Pair로 전달
+    scanResults: List<Triple<ScanResult, Int, String>>,  // ScanResult, azimuth, direction을 Triple로 전달
     scanning: Boolean,
     onStartScan: () -> Unit,
     onStopScan: () -> Unit
@@ -73,11 +73,12 @@ fun BLEScannerScreen(
                             TableCell(text = "Time Stamp", weight = 0.8f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = "MAC Address", weight = 1.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = "RSSI", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
+                            TableCell(text = "Direction", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = "Azimuth", weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                         }
                     }
 
-                    itemsIndexed(scanResults) { index, (result, azimuth) ->
+                    itemsIndexed(scanResults) { index, (result, azimuth, direction) ->
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth(),
@@ -87,7 +88,8 @@ fun BLEScannerScreen(
                             TableCell(text = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(result.timestampNanos / 1000000), weight = 0.8f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = result.device.address, weight = 1.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                             TableCell(text = result.rssi.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
-                            TableCell(text = azimuth.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center) // 해당 타임스탬프에 맞는 azimuth 값 표시
+                            TableCell(text = direction, weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
+                            TableCell(text = azimuth.toString(), weight = 0.5f, fontSize = 12.sp, textAlign = TextAlign.Center)
                         }
                     }
                 }
@@ -95,6 +97,23 @@ fun BLEScannerScreen(
         }
     )
 }
+
+// 방위각을 동서남북으로 변환하는 함수
+// 방위각을 동서남북으로 변환하는 함수
+fun getDirection(azimuth: Int): String {
+    return when {
+        azimuth >= 348 || azimuth < 23 -> "N"  // 북쪽
+        azimuth in 23..68 -> "NE"               // 북동쪽
+        azimuth in 68..113 -> "E"                // 동쪽
+        azimuth in 113..158 -> "SE"              // 동남쪽
+        azimuth in 158..203 -> "S"               // 남쪽
+        azimuth in 203..248 -> "SW"              // 남서쪽
+        azimuth in 248..293 -> "W"               // 서쪽
+        azimuth in 293..348 -> "NW"              // 북서쪽
+        else -> "N"  // 기본값 (북쪽)
+    }
+}
+
 
 @Composable
 fun RowScope.TableCell(

@@ -41,10 +41,13 @@ class MainActivity : ComponentActivity() {
 
     private lateinit var bluetoothAdapter: BluetoothAdapter
     private lateinit var sensorManager: SensorManager
-    private lateinit var rotationVectorSensor: Sensor
+    private var rotationVectorSensor: Sensor? = null
+    private var magnetometerSensor: Sensor? = null
+    private var accelerometerSensor: Sensor? = null
 
     private var scanning by mutableStateOf(false)
-    private var scanResults by mutableStateOf(listOf<Pair<ScanResult, Int>>()) // azimuth 값을 Int로 저장
+    private var scanResults by mutableStateOf<List<Triple<ScanResult, Int, String>>>(emptyList())
+
     private var latestAzimuth = 0f  // 최신 방위각 값을 저장
 
     private val targetMacAddresses = setOf(
@@ -68,8 +71,24 @@ class MainActivity : ComponentActivity() {
         bluetoothAdapter = bluetoothManager.adapter
 
         sensorManager = getSystemService(Context.SENSOR_SERVICE) as SensorManager
-        rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)!!
-        sensorManager.registerListener(sensorEventListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+
+        // 정확한 센서 초기화
+        rotationVectorSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ROTATION_VECTOR)
+        magnetometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_MAGNETIC_FIELD)
+        accelerometerSensor = sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)
+
+        // 센서들 등록
+        rotationVectorSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        } ?: Log.e("MainActivity", "Rotation vector sensor not available")
+
+        magnetometerSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        } ?: Log.e("MainActivity", "Magnetometer sensor not available")
+
+        accelerometerSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        } ?: Log.e("MainActivity", "Accelerometer sensor not available")
 
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
             requestBluetoothPermissions()
@@ -120,6 +139,20 @@ class MainActivity : ComponentActivity() {
             Log.e("MainActivity", "SecurityException: ${e.message}")
         }
     }
+    // 방위각을 동서남북으로 변환하는 함수
+    fun getDirection(azimuth: Int): String {
+        return when {
+            azimuth >= 348 || azimuth < 23 -> "N"  // 북쪽
+            azimuth in 23..68 -> "NE"               // 북동쪽
+            azimuth in 68..113 -> "E"                // 동쪽
+            azimuth in 113..158 -> "SE"              // 동남쪽
+            azimuth in 158..203 -> "S"               // 남쪽
+            azimuth in 203..248 -> "SW"              // 남서쪽
+            azimuth in 248..293 -> "W"               // 서쪽
+            azimuth in 293..348 -> "NW"              // 북서쪽
+            else -> "N"  // 기본값 (북쪽)
+        }
+    }
 
     private fun stopBleScanAndSave(fileName: String) {
         try {
@@ -140,7 +173,8 @@ class MainActivity : ComponentActivity() {
             if (macAddress in targetMacAddresses) {
                 // 방위각을 소수점 없이 정수로 저장
                 val azimuthSnapshot = latestAzimuth.toInt()
-                scanResults = scanResults + (result to azimuthSnapshot) // 방위각과 함께 결과 저장
+                val direction = getDirection(azimuthSnapshot)  // Direction을 얻음
+                scanResults = scanResults + Triple(result, azimuthSnapshot, direction) // 방위각과 방향을 Triple로 저장
                 val rssi = result.rssi
                 sendDataToServer(macAddress, rssi, azimuthSnapshot) // 서버에 저장된 방위각을 전송
             }
@@ -163,9 +197,7 @@ class MainActivity : ComponentActivity() {
                     Log.e("MainActivity", "File name is blank.")
                 }
             }
-            .setNegativeButton("Cancel") { dialog, _ ->
-                dialog.dismiss()
-            }
+            .setNegativeButton("Cancel") { dialog, _ -> dialog.dismiss() }
             .show()
     }
 
@@ -204,26 +236,55 @@ class MainActivity : ComponentActivity() {
     }
 
     private val sensorEventListener = object : SensorEventListener {
-        override fun onSensorChanged(event: SensorEvent) {
-            if (event.sensor == rotationVectorSensor) {
-                val rotationMatrix = FloatArray(9)
-                SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
+        var gravity: FloatArray? = null
+        var geomagnetic: FloatArray? = null
 
-                val orientation = FloatArray(3)
-                SensorManager.getOrientation(rotationMatrix, orientation)
+        override fun onSensorChanged(event: SensorEvent?) {
+            if (event != null) {
+                if (event.sensor.type == Sensor.TYPE_ROTATION_VECTOR) {
+                    val rotationMatrix = FloatArray(9)
+                    SensorManager.getRotationMatrixFromVector(rotationMatrix, event.values)
 
-                // 방위각을 절대적으로 표시 (0이 북쪽, 90이 동쪽) 후 소수점을 없애고 정수로 저장
-                latestAzimuth = ((Math.toDegrees(orientation[0].toDouble()) + 360) % 360).toFloat()
-                Log.i("Direction", "Latest Azimuth: $latestAzimuth")
+                    val orientation = FloatArray(3)
+                    SensorManager.getOrientation(rotationMatrix, orientation)
+
+                    // 방위각을 절대적으로 표시 (0이 북쪽, 90이 동쪽) 후 소수점을 없애고 정수로 저장
+                    latestAzimuth = ((Math.toDegrees(orientation[0].toDouble()) + 360) % 360).toFloat()
+                    Log.i("Direction", "Latest Azimuth: $latestAzimuth")
+                }
+
+                if (event.sensor.type == Sensor.TYPE_MAGNETIC_FIELD) {
+                    geomagnetic = event.values
+                }
+
+                if (gravity != null && geomagnetic != null) {
+                    val R = FloatArray(9)
+                    val I = FloatArray(9)
+                    if (SensorManager.getRotationMatrix(R, I, gravity, geomagnetic)) {
+                        val orientation = FloatArray(3)
+                        SensorManager.getOrientation(R, orientation)
+                        latestAzimuth = Math.toDegrees(orientation[0].toDouble()).toFloat()
+                    }
+                }
             }
         }
 
-        override fun onAccuracyChanged(sensor: Sensor, accuracy: Int) {}
+        override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {}
     }
 
     override fun onResume() {
         super.onResume()
-        sensorManager.registerListener(sensorEventListener, rotationVectorSensor, SensorManager.SENSOR_DELAY_UI)
+        rotationVectorSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        }
+
+        magnetometerSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        }
+
+        accelerometerSensor?.let { sensor ->
+            sensorManager.registerListener(sensorEventListener, sensor, SensorManager.SENSOR_DELAY_UI)
+        }
     }
 
     override fun onPause() {
@@ -236,10 +297,10 @@ class MainActivity : ComponentActivity() {
 
         try {
             FileWriter(file, false).use { writer ->
-                writer.append("No.,TimeStamp,MAC Address,RSSI,Azimuth\n")
-                scanResults.forEachIndexed { index, (result, azimuthSnapshot) ->
+                writer.append("No.,TimeStamp,MAC Address,RSSI,Direction,Azimuth\n")
+                scanResults.forEachIndexed { index, (result, azimuth, direction) ->
                     val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(result.timestampNanos / 1000000)
-                    writer.append("${index + 1},$timestamp,${result.device.address},${result.rssi},$azimuthSnapshot\n")
+                    writer.append("${index + 1},$timestamp,${result.device.address},${result.rssi},$direction,$azimuth\n")
                 }
             }
             shareCsvFile(file)
